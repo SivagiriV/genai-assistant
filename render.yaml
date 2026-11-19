@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: novacart-rag-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: KB_DB
+        value: /var/data/kb.db
+      - key: KB_STORAGE
+        value: /var/data/storage
+    disk:
+      name: kb-data
+      mountPath: /var/data
+      sizeGB: 1
