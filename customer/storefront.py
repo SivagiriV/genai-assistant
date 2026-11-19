@@ -496,57 +496,35 @@ def ask_api(question, history):
 
     logger.warning("CUSTOMER: Sending request to FastAPI")
 
-    try:
+    print("CUSTOMER DEBUG: About to send POST", flush=True)
 
+    try:
         response = requests.post(
             f"{API_URL}/api/chat",
             json=payload,
-            timeout=120
+            timeout=(15, 120)
         )
 
-        logger.warning(
-            "CUSTOMER: FastAPI returned HTTP %s in %.2f seconds",
-            response.status_code,
-            time.time() - started
+        print(
+            f"CUSTOMER DEBUG: Response received: {response.status_code}",
+            flush=True
         )
 
-        if not response.ok:
-
-            try:
-                detail = response.json().get(
-                    "detail",
-                    "API request failed"
-                )
-            except Exception:
-                detail = "API request failed"
-
-            raise RuntimeError(detail)
-
-        data = response.json()
-
-        if "answer" not in data:
-            raise RuntimeError(
-                "FastAPI response does not contain an answer."
-            )
-
-        return data["answer"]
-
-    except requests.exceptions.Timeout:
-        logger.exception("CUSTOMER: FastAPI request timed out")
-
-        raise RuntimeError(
-            "The support server took too long to respond."
+        print(
+            f"CUSTOMER DEBUG: Response body: {response.text[:1000]}",
+            flush=True
         )
 
-    except requests.exceptions.ConnectionError:
-        logger.exception("CUSTOMER: Cannot connect to FastAPI")
+    except requests.exceptions.Timeout as exc:
+        print("CUSTOMER DEBUG: REQUEST TIMED OUT", repr(exc), flush=True)
+        raise
 
-        raise RuntimeError(
-            "Cannot connect to the support server."
-        )
+    except requests.exceptions.ConnectionError as exc:
+        print("CUSTOMER DEBUG: CONNECTION ERROR", repr(exc), flush=True)
+        raise
 
-    except Exception:
-        logger.exception("CUSTOMER: API request failed")
+    except Exception as exc:
+        print("CUSTOMER DEBUG: OTHER ERROR", repr(exc), flush=True)
         raise
 
 
