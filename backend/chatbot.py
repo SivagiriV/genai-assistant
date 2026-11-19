@@ -13,7 +13,10 @@ from langchain_groq import ChatGroq
 import vectordb
 from registry import Registry
 from tabular import TableQA
+import time
+import logging
 
+log = logging.getLogger("chatbot")
 load_dotenv()
 
 CONTACT = os.getenv("SUPPORT_CONTACT", "our support team")
@@ -45,17 +48,57 @@ JUDGE_PROMPT = ChatPromptTemplate.from_template(
 
 
 class Chatbot:
-    def __init__(self, namespace=None, db_path=None, k=None, min_relevance=None, model=None):
-        self.namespace = namespace or os.getenv("PINECONE_NAMESPACE", "kb")
-        self.k = k or int(os.getenv("TOP_K", "4"))
-        self.min_relevance = min_relevance if min_relevance is not None else float(os.getenv("MIN_RELEVANCE", "0.30"))
-        self.registry = Registry(db_path or os.getenv("KB_DB", "data/kb.db"))
-        self.llm = ChatGroq(model=model or os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"), temperature=0)
-        _, self.vectorstore = vectordb.connect(self.namespace, vectordb.make_embeddings())
-        self.tables = TableQA(self.llm)
-        self.retriever = None
-        self._version = None
-        self._lock = threading.Lock()
+    
+    def __init__(self, namespace=None, db_path=None, k=None,min_relevance=None, model=None):
+
+            started = time.time()
+            self.namespace = namespace or os.getenv("PINECONE_NAMESPACE", "kb")
+            self.k = k or int(os.getenv("TOP_K", "4"))
+
+            self.min_relevance = (
+                min_relevance
+                if min_relevance is not None
+                else float(os.getenv("MIN_RELEVANCE", "0.30"))
+            )
+
+            log.info("CHATBOT: Initializing registry")
+
+            self.registry = Registry(
+                db_path or os.getenv("KB_DB", "data/kb.db")
+            )
+
+            log.info("CHATBOT: Initializing Groq")
+
+            self.llm = ChatGroq(
+                model=model or os.getenv(
+                    "LLM_MODEL",
+                    "llama-3.3-70b-versatile"
+                ),
+                temperature=0
+            )
+
+            log.info("CHATBOT: Loading embeddings")
+
+            embeddings = vectordb.make_embeddings()
+
+            log.info("CHATBOT: Connecting Pinecone")
+
+            _, self.vectorstore = vectordb.connect(
+                self.namespace,
+                embeddings
+            )
+
+            self.tables = TableQA(self.llm)
+
+            self.retriever = None
+            self._version = None
+            self._lock = threading.Lock()
+
+            log.info(
+                "CHATBOT: Initialization completed in %.2f seconds",
+                time.time() - started
+            )
+
 
     # ---------- stay in sync with the back office ----------
     def _sync(self):
@@ -107,27 +150,136 @@ class Chatbot:
         return "\n\n".join(f"[{i}] ({self._loc(d.metadata)})\n{d.page_content}" for i, d in enumerate(docs, 1))
 
     # ---------- answering ----------
-    def ask(self, question, history=None):
-        self._sync()
-        if self.retriever is None:
-            return {"answer": FALLBACK, "sources": [], "docs": [], "confidence": 0.0, "standalone": question}
-        standalone = self._condense(question, history or [])
-        agg = self.tables.try_answer(standalone)           # exact counts / row lookups
-        if agg:
-            return {"answer": agg["answer"], "sources": agg["sources"], "docs": [],
-                    "confidence": 1.0, "standalone": standalone}
-        confidence = self._confidence(standalone)
-        if confidence < self.min_relevance:                # hallucination guard
-            return {"answer": FALLBACK, "sources": [], "docs": [],
-                    "confidence": confidence, "standalone": standalone}
-        docs = self.retriever.invoke(standalone)[: self.k]
-        answer = (ANSWER_PROMPT | self.llm | StrOutputParser()).invoke(
-            {"context": self._format_context(docs), "question": standalone})
-        sources = [{"source": d.metadata["source"], "url": d.metadata.get("page_url"),
-                    "page": (int(d.metadata["page"]) + 1) if d.metadata.get("page") is not None else None,
-                    "text": d.page_content} for d in docs]
-        return {"answer": answer, "sources": sources, "docs": docs,
-                "confidence": confidence, "standalone": standalone}
+    
+def ask(self, question, history=None):
+
+    total = time.time()
+
+    def checkpoint(name, started):
+        log.info(
+            "CHATBOT: %s completed in %.2f seconds",
+            name,
+            time.time() - started
+        )
+
+    # 1. Sync knowledge base
+    started = time.time()
+
+    self._sync()
+
+    checkpoint("SYNC", started)
+
+    if self.retriever is None:
+        log.info("CHATBOT: No active retriever. Returning fallback")
+
+        return {
+            "answer": FALLBACK,
+            "sources": [],
+            "docs": [],
+            "confidence": 0.0,
+            "standalone": question
+        }
+
+    # 2. Condense question
+    started = time.time()
+
+    standalone = self._condense(
+        question,
+        history or []
+    )
+
+    checkpoint("CONDENSE", started)
+
+    # 3. Tabular question answering
+    started = time.time()
+
+    agg = self.tables.try_answer(standalone)
+
+    checkpoint("TABLE QA", started)
+
+    if agg:
+        log.info("CHATBOT: Answered using tabular data")
+
+        return {
+            "answer": agg["answer"],
+            "sources": agg["sources"],
+            "docs": [],
+            "confidence": 1.0,
+            "standalone": standalone
+        }
+
+    # 4. Confidence check
+    started = time.time()
+
+    confidence = self._confidence(standalone)
+
+    checkpoint("CONFIDENCE / PINECONE", started)
+
+    if confidence < self.min_relevance:
+
+        log.info(
+            "CHATBOT: Confidence %.4f below minimum %.4f",
+            confidence,
+            self.min_relevance
+        )
+
+        return {
+            "answer": FALLBACK,
+            "sources": [],
+            "docs": [],
+            "confidence": confidence,
+            "standalone": standalone
+        }
+
+    # 5. Hybrid retrieval
+    started = time.time()
+
+    docs = self.retriever.invoke(standalone)[:self.k]
+
+    checkpoint("HYBRID RETRIEVAL", started)
+
+    # 6. Groq answer generation
+    started = time.time()
+
+    answer = (
+        ANSWER_PROMPT
+        | self.llm
+        | StrOutputParser()
+    ).invoke({
+        "context": self._format_context(docs),
+        "question": standalone
+    })
+
+    checkpoint("GROQ ANSWER", started)
+
+    # 7. Prepare sources
+    sources = [
+        {
+            "source": d.metadata["source"],
+            "url": d.metadata.get("page_url"),
+            "page": (
+                int(d.metadata["page"]) + 1
+                if d.metadata.get("page") is not None
+                else None
+            ),
+            "text": d.page_content
+        }
+        for d in docs
+    ]
+
+    log.info(
+        "CHATBOT: TOTAL ASK TIME %.2f seconds",
+        time.time() - total
+    )
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "docs": docs,
+        "confidence": confidence,
+        "standalone": standalone
+    }
+
 
     def judge_faithfulness(self, answer, docs):
         out = (JUDGE_PROMPT | self.llm | StrOutputParser()).invoke(

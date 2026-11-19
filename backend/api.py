@@ -38,12 +38,28 @@ _kb = None
 sessions: dict[str, list] = {}
 
 
+
 def get_bot():
     global _bot
+
     if _bot is None:
+        import time
+
+        started = time.time()
+
+        log.info("API: Creating chatbot instance")
+
         from chatbot import Chatbot
+
         _bot = Chatbot()
+
+        log.info(
+            "API: Chatbot initialized in %.2f seconds",
+            time.time() - started
+        )
+
     return _bot
+
 
 
 def get_kb():
@@ -81,31 +97,82 @@ class ChunkingIn(BaseModel):
     overlap: int = Field(default=120, ge=0, le=300)
 
 
+
 @app.post("/api/chat")
 def chat(body: ChatIn):
-    history = sessions.get(body.session_id, [])
-    try:
-        res = get_bot().ask(body.message.strip(), history)
-    except Exception:
-        log.exception("chat failed")
-        raise HTTPException(500, "Sorry, something went wrong. Please try again.")
 
-    history += [("user", body.message), ("assistant", res["answer"])]
+    import time
+
+    started = time.time()
+
+    log.info("API: CHAT REQUEST RECEIVED")
+
+    history = sessions.get(body.session_id, [])
+
+    try:
+        log.info("API: GETTING CHATBOT")
+
+        bot = get_bot()
+
+        log.info("API: CHATBOT READY")
+
+        log.info("API: STARTING ASK")
+
+        res = bot.ask(
+            body.message.strip(),
+            history
+        )
+
+        log.info("API: ASK COMPLETED")
+
+    except Exception:
+        log.exception("API: CHAT FAILED")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Sorry, something went wrong. Please try again."
+        )
+
+    history += [
+        ("user", body.message),
+        ("assistant", res["answer"])
+    ]
+
     sessions[body.session_id] = history[-12:]
+
     if len(sessions) > 500:
         sessions.pop(next(iter(sessions)))
 
     answer = res["answer"]
+
     sources = []
+
     if SHOW_SOURCES:
         sources = [
-            {"source": s["source"], "url": s.get("url"), "page": s.get("page")}
+            {
+                "source": s["source"],
+                "url": s.get("url"),
+                "page": s.get("page")
+            }
             for s in res["sources"]
         ]
-    else:
-        answer = re.sub(r"\s*\[\d+(?:\s*,\s*\d+)*\]", "", answer)
-    return {"answer": answer, "sources": sources}
 
+    else:
+        answer = re.sub(
+            r"\s\[\d+(?:\s*,\s*\d+)*\]",
+            "",
+            answer
+        )
+
+    log.info(
+        "API: CHAT RESPONSE COMPLETED IN %.2f SECONDS",
+        time.time() - started
+    )
+
+    return {
+        "answer": answer,
+        "sources": sources
+    }
 
 @app.post("/api/reset")
 def reset(body: ResetIn):
