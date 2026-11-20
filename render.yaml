@@ -1,0 +1,39 @@
+# Reference Blueprint for the API. If you created the service by hand in the Render
+# dashboard (as "genai-assistant"), set the SAME values there:
+#   Root Directory = backend | Build Command / Start Command / Health Check Path as below.
+services:
+  - type: web
+    name: novacart-rag-api
+    runtime: python
+    plan: starter            # a persistent disk needs a paid plan (see README_DEPLOY.md, "Free plan")
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python warmup_models.py
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: KB_DB
+        value: /var/data/kb.db
+      - key: KB_STORAGE
+        value: /var/data/storage
+      - key: PINECONE_INDEX
+        value: support-assistant
+      - key: PINECONE_NAMESPACE
+        value: kb
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+      - key: VISION_MODEL
+        value: meta-llama/llama-4-scout-17b-16e-instruct
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: GROQ_API_KEY
+        sync: false          # enter in the dashboard, never in git
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: BO_API_TOKEN
+        sync: false
+    disk:
+      name: kb-data
+      mountPath: /var/data
+      sizeGB: 1

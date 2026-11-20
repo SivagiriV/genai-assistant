@@ -1,0 +1,14 @@
+.env
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/
+storage/
+uploads/
+*.db
+.DS_Store
+# embedding model cache (downloaded at build time)
+backend/.model_cache/
+.model_cache/

@@ -1,0 +1,27 @@
+# --- API / web ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart
+python-dotenv
+requests
+
+# --- RAG ---
+langchain>=0.3,<1.0
+langchain-community>=0.3,<1.0
+langchain-text-splitters>=0.3,<1.0
+langchain-groq>=0.2,<1.0
+langchain-pinecone==0.2.13
+pinecone>=5.0
+rank_bm25
+
+# --- Embeddings (ONNX, no PyTorch: small install, low RAM, fast cold start) ---
+# Same model as before (all-MiniLM-L6-v2, 384 dims), so existing Pinecone vectors stay valid.
+fastembed>=0.4
+
+# --- File loaders ---
+pypdf
+python-docx
+openpyxl
+pandas
+beautifulsoup4
+pillow
